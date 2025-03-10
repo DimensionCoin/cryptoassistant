@@ -22,7 +22,7 @@ export const connect = async () => {
   cached.promise =
     cached.promise ||
     mongoose.connect(MONGODB_URL, {
-      dbName: "AiAssistant",
+      dbName: "Cluster0",
       bufferCommands: false,
       connectTimeoutMS: 30000,
     });
