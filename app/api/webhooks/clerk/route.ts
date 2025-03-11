@@ -9,16 +9,22 @@ import { createUser } from "@/actions/user.actions";
 export async function POST(req: Request) {
   const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
   if (!WEBHOOK_SECRET) {
-    throw new Error("WEBHOOK_SECRET missing from environment variables.");
+    console.error("WEBHOOK_SECRET is missing in env vars.");
+    throw new Error("WEBHOOK_SECRET missing");
   }
 
-  // Use await since headers() returns a promise.
+  // Await headers() because it returns a Promise<ReadonlyHeaders>
   const headerPayload = await headers();
   const svix_id = headerPayload.get("svix-id");
   const svix_timestamp = headerPayload.get("svix-timestamp");
   const svix_signature = headerPayload.get("svix-signature");
 
   if (!svix_id || !svix_timestamp || !svix_signature) {
+    console.error("Missing Svix headers", {
+      svix_id,
+      svix_timestamp,
+      svix_signature,
+    });
     return NextResponse.json(
       { error: "Missing Svix headers." },
       { status: 400 }
@@ -44,11 +50,13 @@ export async function POST(req: Request) {
   }
 
   const eventType = evt.type;
+  console.log("Received webhook event:", eventType);
 
   if (eventType === "user.created") {
     const userData = evt.data;
     const email = userData.email_addresses?.[0]?.email_address;
     if (!email) {
+      console.error("Email not provided in webhook payload", userData);
       return NextResponse.json(
         { error: "Email not provided." },
         { status: 400 }
@@ -63,16 +71,31 @@ export async function POST(req: Request) {
       createdAt: new Date(userData.created_at),
     };
 
-    console.log("Creating user:", user);
-    const newUser = await createUser(user);
+    console.log("Attempting to create user in DB:", user);
+    let newUser;
+    try {
+      newUser = await createUser(user);
+    } catch (dbError) {
+      console.error("Error creating user in DB:", dbError);
+      return NextResponse.json(
+        { error: "Database error while creating user." },
+        { status: 500 }
+      );
+    }
+
     console.log("New MongoDB user:", newUser);
 
     if (newUser) {
-      // Await the clerk client then access its users property.
-      const clerk = await clerkClient();
-      await clerk.users.updateUser(userData.id, {
-        publicMetadata: { userId: newUser._id },
-      });
+      try {
+        // Get the actual Clerk client and update user metadata
+        const clerk = await clerkClient();
+        await clerk.users.updateUser(userData.id, {
+          publicMetadata: { userId: newUser._id },
+        });
+        console.log("Updated Clerk user metadata with DB user ID.");
+      } catch (clerkError) {
+        console.error("Error updating Clerk user metadata:", clerkError);
+      }
     }
 
     return NextResponse.json({ success: true, user: newUser }, { status: 201 });
